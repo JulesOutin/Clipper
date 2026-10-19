@@ -1,0 +1,1 @@
+"""Clipper — pipeline YouTube clips."""

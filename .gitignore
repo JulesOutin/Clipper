@@ -1,0 +1,22 @@
+# Environnement Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.pytest_cache/
+
+# Données locales (vidéos, clips, DB)
+data/
+
+# Secrets
+.env
+
+# macOS
+.DS_Store
+
+# Éditeurs
+.idea/
+.vscode/
+*.swp

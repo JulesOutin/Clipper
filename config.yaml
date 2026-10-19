@@ -1,0 +1,56 @@
+# Clipper — configuration principale
+# Toutes les valeurs peuvent être surchargées par des variables d'environnement.
+
+# Chemin de stockage des données (relatif au projet ou absolu)
+storage_path: data/
+
+transcription:
+  provider: deepgram        # "deepgram" uniquement en v1
+  model: nova-2             # nova-2 : meilleure précision + diarisation
+  language: fr              # code langue BCP-47
+
+selection:
+  model: claude-sonnet-4-6  # "claude-opus-4-8" pour meilleure qualité (plus cher)
+  min_clips: 5
+  max_clips: 15
+  min_duration: 120         # secondes (2 min)
+  max_duration: 300         # secondes (5 min)
+  max_overlap_ratio: 0.20   # chevauchement max entre deux clips (20 %)
+  # Seuil de découpage de la transcription en blocs (en caractères)
+  chunk_threshold: 300000   # ~80 000 tokens — au-delà, on découpe
+  chunk_size_minutes: 30    # taille d'un bloc en minutes
+  chunk_overlap_minutes: 5  # overlap entre blocs en minutes
+
+titles:
+  model: claude-sonnet-4-6
+  max_title_length: 60      # caractères
+  num_proposals: 3
+
+video:
+  format: "bestvideo[height<=1080][ext=mp4]+bestaudio[ext=m4a]/best[height<=1080]"
+  audio_format: wav         # format audio pour Deepgram
+
+cutting:
+  boundary_margin: 0.3      # secondes ajoutées/retirées aux bornes
+  audio_fade: 0.3           # fondu audio en secondes
+  target_lufs: -14          # normalisation LUFS
+  resolution: "1920:1080"   # résolution cible
+  crf: 18                   # qualité vidéo (18 = excellent, 23 = bon)
+
+thumbnail:
+  font_path: ""             # chemin vers une police TTF (vide = police système)
+  font_size: 60
+  text_color: [255, 255, 255]
+  shadow_color: [0, 0, 0]
+  shadow_offset: [3, 3]
+  max_size_bytes: 2097152   # 2 Mo
+  width: 1280
+  height: 720
+  num_frames: 10            # images extraites pour choisir la meilleure
+
+publish:
+  daily_cadence: 2          # clips publiés par jour maximum
+  default_playlist_id: ""   # ID de la playlist de destination (vide = sans playlist)
+  privacy_status: private   # "private" — jamais public directement
+  youtube_quota_per_day: 10000
+  upload_cost_units: 1600   # unités YouTube Data v3 par upload

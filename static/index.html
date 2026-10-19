@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clipper — Revue</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+  <div class="max-w-5xl mx-auto px-6 py-10">
+
+    <div class="flex items-center gap-3 mb-10">
+      <div class="text-3xl">✂️</div>
+      <div>
+        <h1 class="text-2xl font-bold tracking-tight">Clipper</h1>
+        <p class="text-gray-400 text-sm">Interface de revue locale</p>
+      </div>
+    </div>
+
+    <div id="loading" class="text-gray-400 text-sm">Chargement…</div>
+    <div id="empty" class="hidden text-gray-400 text-sm">Aucune vidéo en base. Lancez <code class="bg-gray-800 px-1 rounded">clipper add &lt;URL&gt;</code></div>
+    <div id="videos" class="space-y-4 hidden"></div>
+
+  </div>
+
+  <script>
+    const STATUS_LABELS = {
+      pending: 'En attente',
+      downloading: 'Téléchargement…',
+      downloaded: 'Téléchargé',
+      transcribing: 'Transcription…',
+      transcribed: 'Transcrit',
+      selecting: 'Sélection…',
+      selected: 'Clips sélectionnés',
+      done: 'Terminé',
+      error: 'Erreur',
+    };
+
+    const STATUS_COLORS = {
+      pending: 'bg-gray-700 text-gray-300',
+      downloading: 'bg-blue-900 text-blue-200',
+      downloaded: 'bg-blue-800 text-blue-100',
+      transcribing: 'bg-yellow-900 text-yellow-200',
+      transcribed: 'bg-yellow-700 text-yellow-100',
+      selecting: 'bg-purple-900 text-purple-200',
+      selected: 'bg-green-900 text-green-200',
+      done: 'bg-green-700 text-green-100',
+      error: 'bg-red-900 text-red-200',
+    };
+
+    function statusBadge(status) {
+      const color = STATUS_COLORS[status] || 'bg-gray-700 text-gray-300';
+      return `<span class="text-xs font-medium px-2 py-0.5 rounded-full ${color}">${STATUS_LABELS[status] || status}</span>`;
+    }
+
+    function clipBar(counts) {
+      const total = counts.total || 1;
+      const v = counts.validated || 0;
+      const r = counts.rejected || 0;
+      const c = counts.candidate || 0;
+      return `
+        <div class="flex gap-2 text-xs text-gray-400 mt-2">
+          <span class="text-green-400 font-medium">${v} validé${v>1?'s':''}</span>
+          <span>·</span>
+          <span>${c} candidat${c>1?'s':''}</span>
+          <span>·</span>
+          <span class="text-red-400">${r} rejeté${r>1?'s':''}</span>
+          <span>·</span>
+          <span>${counts.published || 0} publié${(counts.published||0)>1?'s':''}</span>
+        </div>`;
+    }
+
+    async function load() {
+      const res = await fetch('/api/videos');
+      const videos = await res.json();
+
+      document.getElementById('loading').classList.add('hidden');
+
+      if (!videos.length) {
+        document.getElementById('empty').classList.remove('hidden');
+        return;
+      }
+
+      const container = document.getElementById('videos');
+      container.classList.remove('hidden');
+
+      for (const v of videos) {
+        const canReview = (v.clip_counts?.total || 0) > 0;
+        const dur = v.duration ? `${Math.round(v.duration/60)} min` : '—';
+
+        const card = document.createElement('div');
+        card.className = 'bg-gray-900 border border-gray-800 rounded-xl p-5 flex items-start justify-between gap-4';
+        card.innerHTML = `
+          <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1 flex-wrap">
+              ${statusBadge(v.status)}
+              <span class="text-xs text-gray-500">${dur}</span>
+            </div>
+            <h2 class="font-semibold text-base truncate">${v.title || v.id}</h2>
+            <p class="text-xs text-gray-500 mt-0.5">${v.channel || ''}</p>
+            ${clipBar(v.clip_counts || {})}
+            ${v.error_msg ? `<p class="text-xs text-red-400 mt-1 truncate">${v.error_msg}</p>` : ''}
+          </div>
+          <div class="shrink-0">
+            ${canReview
+              ? `<a href="/review/${v.id}" class="inline-block bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">Revoir →</a>`
+              : `<span class="text-xs text-gray-600">Pas encore de clips</span>`}
+          </div>
+        `;
+        container.appendChild(card);
+      }
+    }
+
+    load();
+    // Rafraîchit toutes les 15s si des traitements sont en cours
+    setInterval(load, 15000);
+  </script>
+</body>
+</html>

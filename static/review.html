@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Clipper — Revue clip</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    .clip-card { transition: border-color 0.15s; }
+    .clip-card.validated { border-color: #16a34a; }
+    .clip-card.rejected  { border-color: #dc2626; opacity: 0.5; }
+    .score-bar { background: linear-gradient(90deg, #4f46e5, #7c3aed); }
+    kbd {
+      display: inline-block;
+      padding: 0 5px;
+      background: #374151;
+      border: 1px solid #4b5563;
+      border-radius: 4px;
+      font-family: monospace;
+      font-size: 0.75rem;
+      line-height: 1.6;
+    }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-screen">
+
+  <div class="max-w-5xl mx-auto px-6 py-8">
+
+    <!-- En-tête -->
+    <div class="flex items-center gap-3 mb-2">
+      <a href="/" class="text-gray-500 hover:text-gray-300 transition text-sm">← Accueil</a>
+    </div>
+    <div class="mb-8">
+      <h1 id="video-title" class="text-xl font-bold mb-1">Chargement…</h1>
+      <p id="video-meta" class="text-gray-400 text-sm"></p>
+    </div>
+
+    <!-- Raccourcis -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-8 text-xs text-gray-400 flex flex-wrap gap-4">
+      <span><kbd>V</kbd> Valider</span>
+      <span><kbd>R</kbd> Rejeter</span>
+      <span><kbd>↑</kbd><kbd>↓</kbd> Naviguer entre clips</span>
+      <span><kbd>Space</kbd> Play/Pause</span>
+      <span><kbd>←</kbd><kbd>→</kbd> ±1s début/fin (mode ajustement)</span>
+      <span><kbd>A</kbd> Mode ajustement</span>
+    </div>
+
+    <div id="loading" class="text-gray-400 text-sm">Chargement des clips…</div>
+    <div id="clips-container" class="space-y-8 hidden"></div>
+
+  </div>
+
+  <!-- Toast notification -->
+  <div id="toast" class="fixed bottom-6 right-6 bg-gray-800 text-white text-sm px-4 py-2 rounded-lg shadow-lg hidden transition-all"></div>
+
+  <script>
+    const videoId = location.pathname.split('/').pop();
+    let clips = [];
+    let activeIdx = 0;
+    let adjustMode = false;
+
+    // ---- Utilitaires ----
+
+    function fmtTime(s) {
+      s = Math.round(s);
+      const m = Math.floor(s / 60), sec = s % 60;
+      return `${m}:${sec.toString().padStart(2,'0')}`;
+    }
+
+    function showToast(msg, color = 'bg-gray-800') {
+      const t = document.getElementById('toast');
+      t.textContent = msg;
+      t.className = `fixed bottom-6 right-6 text-white text-sm px-4 py-2 rounded-lg shadow-lg transition-all ${color}`;
+      t.classList.remove('hidden');
+      clearTimeout(t._timer);
+      t._timer = setTimeout(() => t.classList.add('hidden'), 2500);
+    }
+
+    // ---- Rendu ----
+
+    function renderScore(score) {
+      const color = score >= 80 ? 'bg-green-500' : score >= 60 ? 'bg-yellow-500' : 'bg-red-500';
+      return `<div class="flex items-center gap-2">
+        <div class="flex-1 h-1.5 bg-gray-700 rounded-full overflow-hidden">
+          <div class="${color} h-full rounded-full" style="width:${score}%"></div>
+        </div>
+        <span class="text-sm font-bold w-10 text-right">${score}/100</span>
+      </div>`;
+    }
+
+    function renderTitles(clip) {
+      const titles = clip.titles_json || [];
+      if (!titles.length) return '<p class="text-gray-500 text-sm italic">Titres non générés</p>';
+      return titles.map((t, i) => `
+        <label class="flex items-start gap-2 cursor-pointer group">
+          <input type="radio" name="title-${clip.id}" value="${i}"
+            ${clip.title_selected === t ? 'checked' : ''}
+            onchange="setTitle('${clip.id}', '${t.replace(/'/g,"\\'")}', this)"
+            class="mt-1 accent-indigo-500">
+          <span class="text-sm group-hover:text-white transition ${clip.title_selected===t?'text-white font-medium':'text-gray-300'}">${t}</span>
+        </label>`).join('');
+    }
+
+    function renderClip(clip, idx) {
+      const isActive = idx === activeIdx;
+      const statusClass = clip.status === 'validated' ? 'validated' : clip.status === 'rejected' ? 'rejected' : '';
+      const borderColor = isActive ? 'border-indigo-500' : 'border-gray-800';
+
+      return `
+      <div id="clip-${clip.id}" data-idx="${idx}"
+           class="clip-card bg-gray-900 border-2 ${borderColor} ${statusClass} rounded-2xl overflow-hidden"
+           onclick="setActive(${idx})">
+
+        <!-- Statut badge -->
+        <div class="px-5 pt-4 flex items-center justify-between">
+          <div class="flex items-center gap-2">
+            <span class="text-xs font-medium px-2 py-0.5 rounded-full ${statusBadge(clip.status)}">${statusLabel(clip.status)}</span>
+            <span class="text-xs text-gray-500">${fmtTime(clip.start_time)} → ${fmtTime(clip.end_time)} · ${Math.round(clip.duration)}s</span>
+          </div>
+          <div class="w-40">${renderScore(clip.score)}</div>
+        </div>
+
+        <!-- Sujet -->
+        <div class="px-5 pt-2 pb-3">
+          <p class="text-sm font-medium">${clip.subject || '—'}</p>
+          <p class="text-xs text-gray-500 mt-0.5">${clip.reason || ''}</p>
+        </div>
+
+        <!-- Lecteur + miniature -->
+        <div class="grid grid-cols-3 gap-4 px-5 pb-4">
+          <div class="col-span-2">
+            ${clip.clip_path
+              ? `<video id="video-${clip.id}" src="/media/clips/${clip.id}.mp4"
+                   controls preload="metadata"
+                   class="w-full rounded-lg bg-black aspect-video"
+                   onclick="event.stopPropagation()"></video>`
+              : `<div class="w-full aspect-video bg-gray-800 rounded-lg flex items-center justify-center text-gray-500 text-sm">Clip non découpé</div>`}
+          </div>
+          <div class="flex flex-col gap-3">
+            <!-- Miniature -->
+            <div class="relative group">
+              ${clip.thumbnail_path
+                ? `<img src="/media/thumbnails/${clip.id}.jpg" alt="miniature"
+                     class="w-full aspect-video object-cover rounded-lg">`
+                : `<div class="w-full aspect-video bg-gray-800 rounded-lg flex items-center justify-center text-gray-500 text-xs">Pas de miniature</div>`}
+            </div>
+            <!-- Texte miniature -->
+            ${clip.thumbnail_text ? `<p class="text-xs text-gray-400">Texte : <span class="text-white font-medium">"${clip.thumbnail_text}"</span></p>` : ''}
+          </div>
+        </div>
+
+        <!-- Titres -->
+        <div class="border-t border-gray-800 px-5 py-4">
+          <p class="text-xs text-gray-500 uppercase tracking-wider mb-2">Titres</p>
+          <div class="space-y-2">${renderTitles(clip)}</div>
+        </div>
+
+        <!-- Ajustement des bornes -->
+        <div id="adjust-${clip.id}" class="border-t border-gray-800 px-5 py-4 hidden">
+          <p class="text-xs text-gray-500 uppercase tracking-wider mb-3">Ajuster les bornes</p>
+          <div class="flex items-center gap-4 flex-wrap">
+            <div class="flex items-center gap-2">
+              <label class="text-xs text-gray-400">Début</label>
+              <button onclick="adjustBound('${clip.id}','start',-1)" class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs">−1s</button>
+              <span id="start-${clip.id}" class="text-sm font-mono w-12 text-center">${fmtTime(clip.start_time)}</span>
+              <button onclick="adjustBound('${clip.id}','start',1)" class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs">+1s</button>
+            </div>
+            <div class="flex items-center gap-2">
+              <label class="text-xs text-gray-400">Fin</label>
+              <button onclick="adjustBound('${clip.id}','end',-1)" class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs">−1s</button>
+              <span id="end-${clip.id}" class="text-sm font-mono w-12 text-center">${fmtTime(clip.end_time)}</span>
+              <button onclick="adjustBound('${clip.id}','end',1)" class="px-2 py-0.5 bg-gray-700 hover:bg-gray-600 rounded text-xs">+1s</button>
+            </div>
+            <button onclick="saveAdjust('${clip.id}')"
+              class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">
+              Appliquer
+            </button>
+          </div>
+        </div>
+
+        <!-- Boutons d'action -->
+        <div class="border-t border-gray-800 px-5 py-4 flex gap-3">
+          <button onclick="event.stopPropagation(); validate('${clip.id}')"
+            class="flex-1 bg-green-700 hover:bg-green-600 text-white text-sm font-medium py-2 rounded-lg transition">
+            ✓ Valider
+          </button>
+          <button onclick="event.stopPropagation(); reject('${clip.id}')"
+            class="flex-1 bg-red-900 hover:bg-red-800 text-white text-sm font-medium py-2 rounded-lg transition">
+            ✗ Rejeter
+          </button>
+          <button onclick="event.stopPropagation(); toggleAdjust('${clip.id}')"
+            class="px-4 bg-gray-700 hover:bg-gray-600 text-sm font-medium py-2 rounded-lg transition">
+            ⟷ Ajuster
+          </button>
+        </div>
+
+      </div>`;
+    }
+
+    function statusBadge(status) {
+      const map = {
+        candidate: 'bg-gray-700 text-gray-200',
+        validated: 'bg-green-800 text-green-200',
+        rejected: 'bg-red-900 text-red-200',
+        cut: 'bg-blue-800 text-blue-100',
+        published: 'bg-purple-800 text-purple-100',
+      };
+      return map[status] || 'bg-gray-700 text-gray-200';
+    }
+
+    function statusLabel(status) {
+      const map = { candidate: 'Candidat', validated: 'Validé', rejected: 'Rejeté', cut: 'Découpé', published: 'Publié' };
+      return map[status] || status;
+    }
+
+    // ---- Actions ----
+
+    async function validate(clipId) {
+      await fetch(`/api/clips/${clipId}/validate`, { method: 'POST' });
+      showToast('✓ Clip validé', 'bg-green-700');
+      await reload();
+    }
+
+    async function reject(clipId) {
+      await fetch(`/api/clips/${clipId}/reject`, { method: 'POST' });
+      showToast('✗ Clip rejeté', 'bg-red-700');
+      await reload();
+    }
+
+    async function setTitle(clipId, title, el) {
+      await fetch(`/api/clips/${clipId}/title`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ title }),
+      });
+      showToast('Titre sélectionné');
+    }
+
+    function toggleAdjust(clipId) {
+      const panel = document.getElementById(`adjust-${clipId}`);
+      panel.classList.toggle('hidden');
+    }
+
+    const _pendingAdjusts = {};
+
+    function adjustBound(clipId, bound, delta) {
+      if (!_pendingAdjusts[clipId]) {
+        const clip = clips.find(c => c.id === clipId);
+        _pendingAdjusts[clipId] = { start: clip.start_time, end: clip.end_time };
+      }
+      _pendingAdjusts[clipId][bound] += delta;
+      document.getElementById(`${bound}-${clipId}`).textContent = fmtTime(_pendingAdjusts[clipId][bound]);
+    }
+
+    async function saveAdjust(clipId) {
+      const adj = _pendingAdjusts[clipId];
+      if (!adj) return;
+      const res = await fetch(`/api/clips/${clipId}/adjust`, {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ start_time: adj.start, end_time: adj.end }),
+      });
+      if (!res.ok) {
+        const err = await res.json();
+        showToast(`Erreur : ${err.detail}`, 'bg-red-700');
+        return;
+      }
+      delete _pendingAdjusts[clipId];
+      showToast('Bornes mises à jour — relancez clipper run pour re-découper', 'bg-yellow-700');
+      await reload();
+    }
+
+    function setActive(idx) {
+      activeIdx = idx;
+      document.querySelectorAll('.clip-card').forEach((el, i) => {
+        const isActive = i === idx;
+        el.querySelectorAll(':scope > *').forEach(() => {});
+        el.classList.toggle('border-indigo-500', isActive);
+        el.classList.toggle('border-gray-800', !isActive && !['validated','rejected'].includes(clips[i]?.status));
+      });
+      document.getElementById(`clip-${clips[idx].id}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    // ---- Clavier ----
+
+    document.addEventListener('keydown', async (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+      const clip = clips[activeIdx];
+      if (!clip) return;
+
+      if (e.key === 'v' || e.key === 'V') { await validate(clip.id); }
+      else if (e.key === 'r' || e.key === 'R') { await reject(clip.id); }
+      else if (e.key === 'a' || e.key === 'A') { toggleAdjust(clip.id); }
+      else if (e.key === 'ArrowDown') { e.preventDefault(); if (activeIdx < clips.length-1) setActive(activeIdx+1); }
+      else if (e.key === 'ArrowUp') { e.preventDefault(); if (activeIdx > 0) setActive(activeIdx-1); }
+      else if (e.key === ' ') {
+        e.preventDefault();
+        const vid = document.getElementById(`video-${clip.id}`);
+        if (vid) vid.paused ? vid.play() : vid.pause();
+      }
+    });
+
+    // ---- Chargement ----
+
+    async function reload() {
+      const res = await fetch(`/api/videos/${videoId}/clips`);
+      clips = await res.json();
+      const container = document.getElementById('clips-container');
+      container.innerHTML = clips.map((c, i) => renderClip(c, i)).join('');
+    }
+
+    async function init() {
+      const vRes = await fetch(`/api/videos/${videoId}`);
+      const video = await vRes.json();
+      document.getElementById('video-title').textContent = video.title || videoId;
+      document.getElementById('video-meta').textContent = [
+        video.channel,
+        video.duration ? `${Math.round(video.duration/60)} min` : null,
+        video.status,
+      ].filter(Boolean).join(' · ');
+
+      document.getElementById('loading').classList.add('hidden');
+      document.getElementById('clips-container').classList.remove('hidden');
+      await reload();
+    }
+
+    init();
+  </script>
+</body>
+</html>
